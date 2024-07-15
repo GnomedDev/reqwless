@@ -35,7 +35,7 @@ pub struct TlsConfig<'a> {
     certificates: crate::Certificates<'a>,
 
     /// Will use hardware acceleration on the ESP32 if it contains the RSA peripheral.
-    rsa: Option<&'a mut esp_mbedtls::Rsa<'a>>,
+    rsa: Option<&'a mut esp_mbedtls::hal::peripherals::RSA>,
 }
 
 /// Type for TLS configuration of HTTP client.
@@ -73,7 +73,7 @@ impl<'a> TlsConfig<'a> {
     pub fn new(
         version: crate::TlsVersion,
         certificates: crate::Certificates<'a>,
-        rsa: Option<&'a mut esp_mbedtls::Rsa<'a>>,
+        rsa: Option<&'a mut esp_mbedtls::hal::peripherals::RSA>,
     ) -> Self {
         Self {
             version,
@@ -130,18 +130,20 @@ where
         if url.scheme() == UrlScheme::HTTPS {
             #[cfg(feature = "esp-mbedtls")]
             if let Some(tls) = self.tls.as_mut() {
-                let session = esp_mbedtls::asynch::Session::new(
+                let mut session = esp_mbedtls::asynch::Session::new(
                     conn,
                     host,
                     esp_mbedtls::Mode::Client,
                     tls.version,
                     tls.certificates,
-                    // Create a inner Some(&mut Rsa) because Rsa doesn't implement Copy
-                    tls.rsa.as_mut().map(|inner| inner as &mut esp_mbedtls::Rsa),
-                )?
-                .connect()
-                .await?;
-                Ok(HttpConnection::Tls(session))
+                )?;
+
+                if let Some(rsa) = &mut tls.rsa {
+                    session = session.with_hardware_rsa(rsa as &mut esp_mbedtls::hal::peripherals::RSA);
+                }
+
+                let connected_session = session.connect().await?;
+                Ok(HttpConnection::Tls(connected_session))
             } else {
                 Ok(HttpConnection::Plain(conn))
             }
