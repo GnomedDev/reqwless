@@ -12,6 +12,8 @@ use embedded_io_async::{Read, Write};
 use embedded_nal_async::{Dns, SocketAddr, TcpConnect};
 use nourl::{Url, UrlScheme};
 
+const ASYNC_TLS_BUF_SIZE: usize = 4096;
+
 /// An async HTTP client that can establish a TCP connection and perform
 /// HTTP requests.
 pub struct HttpClient<'a, T, D>
@@ -36,6 +38,9 @@ pub struct TlsConfig<'a> {
 
     /// Will use hardware acceleration on the ESP32 if it contains the RSA peripheral.
     rsa: Option<&'a mut esp_mbedtls::hal::peripherals::RSA>,
+
+    tx_buffer: &'a mut [u8; ASYNC_TLS_BUF_SIZE],
+    rx_buffer: &'a mut [u8; ASYNC_TLS_BUF_SIZE],
 }
 
 /// Type for TLS configuration of HTTP client.
@@ -74,11 +79,16 @@ impl<'a> TlsConfig<'a> {
         version: crate::TlsVersion,
         certificates: crate::Certificates<'a>,
         rsa: Option<&'a mut esp_mbedtls::hal::peripherals::RSA>,
+
+        tx_buffer: &'a mut [u8; ASYNC_TLS_BUF_SIZE],
+        rx_buffer: &'a mut [u8; ASYNC_TLS_BUF_SIZE],
     ) -> Self {
         Self {
             version,
             certificates,
             rsa,
+            rx_buffer,
+            tx_buffer,
         }
     }
 }
@@ -136,6 +146,8 @@ where
                     esp_mbedtls::Mode::Client,
                     tls.version,
                     tls.certificates,
+                    tls.tx_buffer,
+                    tls.rx_buffer,
                 )?;
 
                 if let Some(rsa) = &mut tls.rsa {
@@ -222,7 +234,7 @@ where
     Plain(C),
     PlainBuffered(BufferedWrite<'conn, C>),
     #[cfg(feature = "esp-mbedtls")]
-    Tls(esp_mbedtls::asynch::AsyncConnectedSession<C, 4096>),
+    Tls(esp_mbedtls::asynch::AsyncConnectedSession<'conn, C, ASYNC_TLS_BUF_SIZE>),
     #[cfg(feature = "embedded-tls")]
     Tls(embedded_tls::TlsConnection<'conn, C, embedded_tls::Aes128GcmSha256>),
     #[cfg(all(not(feature = "embedded-tls"), not(feature = "esp-mbedtls")))]
